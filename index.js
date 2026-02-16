@@ -2,21 +2,22 @@ import express from "express";
 import formidable from "formidable";
 import fs from "fs";
 import path from "path";
-import cors from "cors";
-
-app.use(cors({
-  origin: "https://filesnap-eight.vercel.app/", // or "*" for testing
-  methods: ["GET", "POST"]
-}));
+import cors from "cors";  // ✅ import cors
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MASTER = process.env.MASTER_KEY || "manthan123";
 
-// ensure uploads directory exists
-if (!fs.existsSync("uploads")) {
-  fs.mkdirSync("uploads");
-}
+// allow CORS for your Vercel frontend
+app.use(cors({
+  origin: "https://filesnap-eight.vercel.app", // replace with your actual Vercel URL
+  methods: ["GET", "POST"]
+}));
+
+// ensure uploads folder exists
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
+
+// ...rest of your backend code (upload/download endpoints)...
 
 // auth middleware
 function auth(req, res, next) {
