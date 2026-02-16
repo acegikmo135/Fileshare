@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MASTER = process.env.MASTER_KEY || "manthan123";
 
-// ensure uploads dir
+// ensure uploads directory exists
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads");
 }
@@ -19,7 +19,7 @@ function auth(req, res, next) {
   next();
 }
 
-// upload
+// upload endpoint
 app.post("/upload", auth, (req, res) => {
   const form = formidable({
     uploadDir: "uploads",
@@ -33,19 +33,18 @@ app.post("/upload", auth, (req, res) => {
     const file = files.file[0];
     const id = path.basename(file.filepath);
 
-    // auto delete after 10 min
-    // auto delete after 10 min
-setTimeout(() => {
-  if (fs.existsSync(`uploads/${id}`)) {
-    fs.unlink(`uploads/${id}`, () => {});
-  }
-}, 10 * 60 * 1000);
+    // auto delete after 10 minutes
+    setTimeout(() => {
+      if (fs.existsSync(`uploads/${id}`)) {
+        fs.unlink(`uploads/${id}`, () => {});
+      }
+    }, 10 * 60 * 1000);
 
     res.json({ link: `/file/${id}` });
   });
 });
 
-// download (one-time)
+// download endpoint (one-time)
 app.get("/file/:id", auth, (req, res) => {
   const filePath = `uploads/${req.params.id}`;
   if (!fs.existsSync(filePath)) return res.sendStatus(404);
@@ -55,27 +54,7 @@ app.get("/file/:id", auth, (req, res) => {
   });
 });
 
-app.get("/", (req, res) => {
-  res.send("Private Share is running.");
-});
-
-app.listen(PORT, () => {
-  console.log("Running on port", PORT);
-});  }, 10 * 60 * 1000);
-
-  res.json({ link: `/file/${id}` });
-});
-
-// download (one-time)
-app.get("/file/:id", auth, (req, res) => {
-  const filePath = `uploads/${req.params.id}`;
-  if (!fs.existsSync(filePath)) return res.sendStatus(404);
-
-  res.download(filePath, () => {
-    fs.unlink(filePath, () => {});
-  });
-});
-
+// root
 app.get("/", (req, res) => {
   res.send("Private Share is running.");
 });
