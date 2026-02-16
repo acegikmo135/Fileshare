@@ -34,11 +34,12 @@ app.post("/upload", auth, (req, res) => {
     const id = path.basename(file.filepath);
 
     // auto delete after 10 min
-    setTimeout(() => {
-      if (fs.existsSync(`uploads/${id}`)) {
-        fs.unlink(`uploads/${id}`, () => {});
-      }
-    }, 10 * 60 * 1000);
+    // auto delete after 10 min
+setTimeout(() => {
+  if (fs.existsSync(`uploads/${id}`)) {
+    fs.unlink(`uploads/${id}`, () => {});
+  }
+}, 10 * 60 * 1000);
 
     res.json({ link: `/file/${id}` });
   });
