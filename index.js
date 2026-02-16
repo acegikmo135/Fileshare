@@ -2,6 +2,12 @@ import express from "express";
 import formidable from "formidable";
 import fs from "fs";
 import path from "path";
+import cors from "cors";
+
+app.use(cors({
+  origin: "https://filesnap-eight.vercel.app/", // or "*" for testing
+  methods: ["GET", "POST"]
+}));
 
 const app = express();
 const PORT = process.env.PORT || 3000;
