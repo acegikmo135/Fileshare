@@ -8,15 +8,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MASTER = process.env.MASTER_KEY || "manthan123";
 
-app.use(cors({ origin: "*", methods: ["GET", "POST"] }));
-app.use(express.json()); // for JSON body in receive
+app.use(cors({ origin: "*" }));
+app.use(express.json());
 
 if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 
 // map code -> file path
 const fileMap = {};
 
-// helper to generate random code
 function generateCode(length = 6) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let code = "";
@@ -26,20 +25,21 @@ function generateCode(length = 6) {
   return code;
 }
 
-// upload endpoint
+// Upload endpoint
 app.post("/upload", (req, res) => {
   const key = req.headers.authorization || req.query.key;
   if (key !== MASTER) return res.sendStatus(401);
 
-  const form = formidable({ uploadDir: "uploads", keepExtensions: true, maxFileSize: 100*1024*1024 });
+  const form = formidable({ uploadDir: "uploads", keepExtensions: true, maxFileSize: 100 * 1024 * 1024 });
   form.parse(req, (err, fields, files) => {
     if (err) return res.status(400).send("Upload error");
+
     const file = files.file[0];
     const code = generateCode();
     const id = path.basename(file.filepath);
     fileMap[code] = `uploads/${id}`;
 
-    // auto delete after 10 minutes
+    // Auto-delete after 10 minutes
     setTimeout(() => {
       if (fs.existsSync(fileMap[code])) fs.unlinkSync(fileMap[code]);
       delete fileMap[code];
@@ -49,7 +49,7 @@ app.post("/upload", (req, res) => {
   });
 });
 
-// receive endpoint
+// Receive endpoint
 app.post("/receive", (req, res) => {
   const { code } = req.body;
   const filePath = fileMap[code];
@@ -61,6 +61,9 @@ app.post("/receive", (req, res) => {
   });
 });
 
+app.get("/", (req, res) => res.send("Private Share with Code running."));
+
+app.listen(PORT, () => console.log(`Running on port ${PORT}`));
 app.get("/", (req, res) => res.send("Private Share with Code running."));
 app.listen(PORT, () => console.log("Running on port", PORT));  form.parse(req, (err, fields, files) => {
     if (err) return res.status(400).send("Upload error");
