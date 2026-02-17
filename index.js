@@ -1,60 +1,64 @@
+// index.js
 import http from "http";
+import { IncomingForm } from "formidable";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-import { formidable } from "formidable";
 import crypto from "crypto";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const PORT = process.env.PORT || 3000;
+const files = new Map(); // code -> metadata
 
-const uploadsDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+const uploadDir = "./uploads";
+fs.mkdirSync(uploadDir, { recursive: true });
 
-const filesDB = new Map(); 
-// code => { filepath, filename, createdAt, expiresAt, downloads, logs }
-
-function json(res, obj, status = 200) {
-  res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
-  res.end(JSON.stringify(obj));
+function json(res, data) {
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*"
+  });
+  res.end(JSON.stringify(data));
 }
 
-const server = http.createServer(async (req, res) => {
+function genCode() {
+  return crypto.randomBytes(4).toString("hex");
+}
 
-  // CORS
+function getClientInfo(req) {
+  return {
+    ip: req.socket.remoteAddress,
+    ua: req.headers["user-agent"] || "unknown"
+  };
+}
+
+const server = http.createServer((req, res) => {
+  // CORS preflight
   if (req.method === "OPTIONS") {
     res.writeHead(200, {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,DELETE",
-      "Access-Control-Allow-Headers": "Content-Type"
+      "Access-Control-Allow-Methods": "*",
+      "Access-Control-Allow-Headers": "*"
     });
     return res.end();
   }
 
   // UPLOAD
   if (req.url === "/upload" && req.method === "POST") {
-    const form = formidable({
-      uploadDir: uploadsDir,
-      keepExtensions: true,
-      maxFileSize: 1024 * 1024 * 1024 // 1GB
+    const form = new IncomingForm({
+      uploadDir,
+      keepExtensions: true
     });
 
-    form.parse(req, (err, fields, files) => {
-      if (err) return json(res, { error: err.message }, 500);
+    form.parse(req, (err, fields, file) => {
+      const f = file.file;
+      const code = genCode();
+      const expires = Date.now() + 2 * 60 * 1000; // 2 min
 
-      const file = files.file?.[0];
-      if (!file) return json(res, { error: "No file" }, 400);
-
-      const code = crypto.randomBytes(5).toString("hex");
-      const expiresAt = Date.now() + 2 * 60 * 1000; // 2 min
-
-      filesDB.set(code, {
-        filepath: file.filepath,
-        filename: file.originalFilename,
-        createdAt: Date.now(),
-        expiresAt,
+      files.set(code, {
+        path: f.filepath,
+        name: f.originalFilename,
+        expires,
         downloads: 0,
-        logs: []
+        devices: []
       });
 
       json(res, { code, expiresIn: 120 });
@@ -65,50 +69,50 @@ const server = http.createServer(async (req, res) => {
   // DOWNLOAD
   if (req.url.startsWith("/download/")) {
     const code = req.url.split("/").pop();
-    const data = filesDB.get(code);
+    const data = files.get(code);
 
-    if (!data) return json(res, { error: "Invalid code" }, 404);
-    if (Date.now() > data.expiresAt) {
-      fs.unlinkSync(data.filepath);
-      filesDB.delete(code);
-      return json(res, { error: "Expired" }, 410);
+    if (!data) return json(res, { error: "Invalid code" });
+    if (Date.now() > data.expires) {
+      files.delete(code);
+      return json(res, { error: "Expired" });
     }
 
+    const info = getClientInfo(req);
+    data.devices.push(info);
     data.downloads++;
-    data.logs.push({
-      ip: req.socket.remoteAddress,
-      ua: req.headers["user-agent"],
-      time: new Date().toISOString()
-    });
 
     res.writeHead(200, {
-      "Content-Disposition": `attachment; filename="${data.filename}"`
+      "Content-Disposition": `attachment; filename="${data.name}"`
     });
-    fs.createReadStream(data.filepath).pipe(res);
+    fs.createReadStream(data.path).pipe(res);
     return;
   }
 
-  // INFO
-  if (req.url.startsWith("/info/")) {
+  // STATS
+  if (req.url.startsWith("/stats/")) {
     const code = req.url.split("/").pop();
-    const data = filesDB.get(code);
-    if (!data) return json(res, { error: "Invalid" }, 404);
-    return json(res, data);
+    const data = files.get(code);
+    if (!data) return json(res, { error: "Invalid" });
+
+    json(res, {
+      downloads: data.downloads,
+      devices: data.devices,
+      expiresIn: Math.max(0, Math.floor((data.expires - Date.now())/1000))
+    });
+    return;
   }
 
   // MANUAL EXPIRE
   if (req.url.startsWith("/expire/")) {
     const code = req.url.split("/").pop();
-    const data = filesDB.get(code);
-    if (!data) return json(res, { error: "Invalid" }, 404);
-    fs.unlinkSync(data.filepath);
-    filesDB.delete(code);
-    return json(res, { success: true });
+    files.delete(code);
+    json(res, { success: true });
+    return;
   }
 
-  json(res, { status: "Backend running" });
+  json(res, { status: "ok" });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-  console.log("Server running");
+server.listen(PORT, () => {
+  console.log("Running on", PORT);
 });
