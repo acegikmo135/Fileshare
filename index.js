@@ -1,91 +1,103 @@
 import express from "express";
 import formidable from "formidable";
 import fs from "fs";
-import crypto from "crypto";
+import path from "path";
 import cors from "cors";
+import { nanoid } from "nanoid";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-const uploads = new Map(); // in-memory DB
+const uploadDir = "./uploads";
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-// utils
-function genCode(){
-  return crypto.randomBytes(6).toString("hex");
-}
+// In-memory DB (use Redis later if needed)
+const files = new Map();
 
-function getClientInfo(req){
-  return {
-    ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
-    ua: req.headers["user-agent"]
-  };
-}
-
-// upload
-app.post("/upload", (req,res)=>{
+/* ---------------- UPLOAD ---------------- */
+app.post("/upload", (req, res) => {
   const form = formidable({
-    uploadDir:"./uploads",
-    keepExtensions:true,
-    maxFileSize: 200 * 1024 * 1024 // 200MB
+    uploadDir,
+    keepExtensions: true,
+    maxFileSize: 1 * 1024 * 1024 * 1024 // 5GB
   });
 
-  const code = genCode();
-  uploads.set(code,{
-    status:"uploading",
-    downloads:0,
-    createdAt:Date.now(),
-    expiresAt:Date.now()+120000,
-    receivers:[]
-  });
+  form.parse(req, (err, fields, filesData) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-  form.parse(req,(err,fields,files)=>{
-    if(err) return res.status(500).json({err:"upload failed"});
+    const file = filesData.file[0];
+    const code = nanoid(6).toUpperCase();
+    const expireAt = Date.now() + 2 * 60 * 1000;
 
-    const file = files.file[0];
-    uploads.set(code,{
-      ...uploads.get(code),
-      status:"ready",
-      path:file.filepath,
-      name:file.originalFilename
+    files.set(code, {
+      path: file.filepath,
+      name: file.originalFilename,
+      size: file.size,
+      expireAt,
+      downloads: 0,
+      logs: []
     });
 
-    res.json({ code, expiresIn:120 });
+    res.json({ code, expireAt });
   });
 });
 
-// receive
-app.post("/receive",(req,res)=>{
-  const {code} = req.body;
-  const entry = uploads.get(code);
-  if(!entry) return res.status(404).json({err:"invalid"});
+/* ---------------- DOWNLOAD ---------------- */
+app.get("/download/:code", (req, res) => {
+  const entry = files.get(req.params.code);
+  if (!entry) return res.status(404).json({ error: "Invalid code" });
 
-  if(Date.now()>entry.expiresAt){
-    uploads.delete(code);
-    return res.status(410).json({err:"expired"});
+  if (Date.now() > entry.expireAt) {
+    cleanup(req.params.code);
+    return res.status(410).json({ error: "Expired" });
   }
 
-  if(entry.status!=="ready")
-    return res.status(202).json({err:"not_ready"});
-
   entry.downloads++;
-  entry.receivers.push(getClientInfo(req));
+  entry.logs.push({
+    ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
+    ua: req.headers["user-agent"],
+    time: new Date().toISOString()
+  });
 
-  res.download(entry.path, entry.name);
+  res.setHeader("Content-Disposition", `attachment; filename="${entry.name}"`);
+  fs.createReadStream(entry.path).pipe(res);
 });
 
-// stats
-app.get("/stats/:code",(req,res)=>{
-  const e = uploads.get(req.params.code);
-  if(!e) return res.status(404).json({err:"invalid"});
-  res.json(e);
+/* ---------------- STATS ---------------- */
+app.get("/stats/:code", (req, res) => {
+  const entry = files.get(req.params.code);
+  if (!entry) return res.status(404).json({ error: "Invalid" });
+
+  res.json({
+    downloads: entry.downloads,
+    size: entry.size,
+    expiresIn: entry.expireAt - Date.now(),
+    logs: entry.logs
+  });
 });
 
-// manual expire
-app.post("/expire",(req,res)=>{
-  uploads.delete(req.body.code);
-  res.json({ok:true});
+/* ---------------- MANUAL EXPIRE ---------------- */
+app.post("/expire/:code", (req, res) => {
+  cleanup(req.params.code);
+  res.json({ ok: true });
 });
 
-app.listen(PORT,()=>console.log("Running",PORT));
+/* ---------------- CLEANUP ---------------- */
+function cleanup(code) {
+  const entry = files.get(code);
+  if (!entry) return;
+  fs.unlink(entry.path, () => {});
+  files.delete(code);
+}
+
+/* ---------------- AUTO CLEANER ---------------- */
+setInterval(() => {
+  for (const [code, entry] of files) {
+    if (Date.now() > entry.expireAt) cleanup(code);
+  }
+}, 30000);
+
+app.listen(3000, () => {
+  console.log("Running on http://localhost:3000");
+});
