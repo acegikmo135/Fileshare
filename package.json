@@ -1,14 +1,16 @@
 {
-  "name": "private-share",
+  "name": "fileshare-backend",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
+  "description": "Secure temporary file sharing backend using Formidable",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "formidable": "^3.5.2",
-    "cors": "^2.8.5"
+    "express": "^4.19.2",
+    "formidable": "3.5.2",
+    "cors": "^2.8.5",
+    "nanoid": "^5.0.6"
   }
 }
