@@ -1,71 +1,91 @@
 import express from "express";
 import formidable from "formidable";
 import fs from "fs";
-import path from "path";
+import crypto from "crypto";
 import cors from "cors";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const MASTER = process.env.MASTER_KEY || "manthan123";
-
-app.use(cors({ origin: "*" }));
+app.use(cors());
 app.use(express.json());
 
-if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
+const PORT = process.env.PORT || 3000;
+const uploads = new Map(); // in-memory DB
 
-const fileMap = {}; // code -> file path
-
-function generateCode(length = 6) {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let code = "";
-  for (let i = 0; i < length; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
+// utils
+function genCode(){
+  return crypto.randomBytes(6).toString("hex");
 }
 
-// Upload
-app.post("/upload", (req, res) => {
-  const key = req.headers.authorization || req.query.key;
-  if (key !== MASTER) return res.sendStatus(401);
+function getClientInfo(req){
+  return {
+    ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
+    ua: req.headers["user-agent"]
+  };
+}
 
+// upload
+app.post("/upload", (req,res)=>{
   const form = formidable({
-    uploadDir: "uploads",
-    keepExtensions: true,
-    maxFileSize: 100 * 1024 * 1024, // 100 MB
+    uploadDir:"./uploads",
+    keepExtensions:true,
+    maxFileSize: 200 * 1024 * 1024 // 200MB
   });
 
-  form.parse(req, (err, fields, files) => {
-    if (err) return res.status(400).send("Upload error");
-
-    const file = Array.isArray(files.file) ? files.file[0] : files.file;
-    const code = generateCode();
-    const id = path.basename(file.filepath);
-    fileMap[code] = `uploads/${id}`;
-
-    // Auto-delete after 10 minutes
-    setTimeout(() => {
-      if (fs.existsSync(fileMap[code])) fs.unlinkSync(fileMap[code]);
-      delete fileMap[code];
-    }, 10 * 60 * 1000);
-
-    res.json({ code });
+  const code = genCode();
+  uploads.set(code,{
+    status:"uploading",
+    downloads:0,
+    createdAt:Date.now(),
+    expiresAt:Date.now()+120000,
+    receivers:[]
   });
-});
 
-// Receive
-app.post("/receive", (req, res) => {
-  const { code } = req.body;
-  const filePath = fileMap[code];
+  form.parse(req,(err,fields,files)=>{
+    if(err) return res.status(500).json({err:"upload failed"});
 
-  if (!filePath || !fs.existsSync(filePath)) return res.status(404).send("File not found or expired");
+    const file = files.file[0];
+    uploads.set(code,{
+      ...uploads.get(code),
+      status:"ready",
+      path:file.filepath,
+      name:file.originalFilename
+    });
 
-  res.download(filePath, () => {
-    fs.unlinkSync(filePath);
-    delete fileMap[code];
+    res.json({ code, expiresIn:120 });
   });
 });
 
-app.get("/", (req, res) => res.send("Private Share with Code running."));
+// receive
+app.post("/receive",(req,res)=>{
+  const {code} = req.body;
+  const entry = uploads.get(code);
+  if(!entry) return res.status(404).json({err:"invalid"});
 
-app.listen(PORT, () => console.log(`Running on port ${PORT}`));
+  if(Date.now()>entry.expiresAt){
+    uploads.delete(code);
+    return res.status(410).json({err:"expired"});
+  }
+
+  if(entry.status!=="ready")
+    return res.status(202).json({err:"not_ready"});
+
+  entry.downloads++;
+  entry.receivers.push(getClientInfo(req));
+
+  res.download(entry.path, entry.name);
+});
+
+// stats
+app.get("/stats/:code",(req,res)=>{
+  const e = uploads.get(req.params.code);
+  if(!e) return res.status(404).json({err:"invalid"});
+  res.json(e);
+});
+
+// manual expire
+app.post("/expire",(req,res)=>{
+  uploads.delete(req.body.code);
+  res.json({ok:true});
+});
+
+app.listen(PORT,()=>console.log("Running",PORT));
